@@ -167,7 +167,7 @@ class PCEWithGLSorGGMR:
             )
         else:
             phisIndexes = self.selectedIndices
-        
+
         phis = [
             self.multivariateBasis.build(i)
             for i in range(enumerateFunction.getMaximumDegreeCardinal(self.totalDegree))
@@ -211,8 +211,6 @@ class PCEWithGLSorGGMR:
 
             # compute a design matrix for the phis retained
             design = proxy.computeDesign(phisIndexes)
-            # update functions collection for PCE result
-            phis = [self.multivariateBasis.build(i) for i in phisIndexes]
 
             # update coefficient values
             if self.leastSquaresMethod == "GLS":
@@ -221,6 +219,9 @@ class PCEWithGLSorGGMR:
                     design, self.outputSample[:, 0], self.VYCollection[0]
                 )
                 a, v = GLS.solve(lambdaReg=1e-5)
+
+        # update functions collection for PCE result
+        phis = [self.multivariateBasis.build(i) for i in phisIndexes]
 
         residualsPoint = [1.0]
         relativeErrorsPoint = [1.0]
@@ -238,14 +239,20 @@ class PCEWithGLSorGGMR:
             relativeErrorsPoint,
         )
 
+        # FIXME : class inherited from FunctionalChaosResult to be created
+        self.covMCollection = [v]
+
     def getResult(self):
         """
         Return the functional chaos result.
 
         Returns
         -------
-        result : ot.FunctionalChaosResult
+        result : :class:`~openturns.FunctionalChaosResult`
             The metamodel.
+
+        covMCollection : sequence of :class:`~openturns.CovarianceMatrix`
+            Sequence of covariance Matrix associated to each coefficient set (one per column of output Sample)
         """
 
-        return self.result
+        return self.result, self.covMCollection
