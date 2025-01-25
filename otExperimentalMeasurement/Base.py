@@ -1,6 +1,8 @@
 import openturns as ot
 import numpy as np
 import warnings
+import copy
+import time
 
 
 class GeneralizedLeastSquareMethod:
@@ -117,7 +119,7 @@ class PCEWithGLSorGGMR:
         The distribution of the input.
     VYCollection : sequence of :class:`openturns.CovarianceMatrix`
         Collection of VarianceCovariance Matrix associated to each column of outputSample
-    multivariateBasis : :class:`~openturns.OrthogonalBasis`maxim
+    multivariateBasis : :class:`~openturns.OrthogonalBasis`
         The orthogonal basis of functions.
     totalDegree : int
         Set the total degree of the PCE
@@ -127,6 +129,7 @@ class PCEWithGLSorGGMR:
         indices of the basis functions used for the PCE - default None
     leastSquaresMethod : str
         The resolution method : "GLS" or "GGMR"
+
     """
 
     def __init__(
@@ -256,3 +259,235 @@ class PCEWithGLSorGGMR:
         """
 
         return self.result, self.covMCollection
+
+
+class BatchMeanBatchCorrelation:
+    """
+    Base class for batch mean batch correlation
+
+    Parameters
+    ----------
+    X : :class:`~openturns.Sample`
+        Sample of position associated to each measurement. It can be a 1d sample if it is a time series or a 2d if it is a spatial series. larger dimension ar also handled.
+    Y : :class:`~openturns.Sample`
+        Sample of Measurment - Dimension must be 1
+    Metrics: str, optional
+        metrics used to compute distance between points. Can be "L1" or "L2". default : "L2"
+    startBatchSize : int, optional
+        intial batch size. Default : 2
+    threshold : float, optional
+        S_1 / S_0 - default 0.5
+    fixedBatchSize : bool, optional
+        if true, optimal batch size to have the desired uncorrelation is not computed. default : False
+    sortSample : bool, optional
+        if true, provided X and Y sample are sorted according to provided norm. First point is arbritary, then next is the closest one. Defaul : true
+    """
+
+    def __init__(
+        self,
+        X,
+        Y,
+        metrics="L2",
+        startBatchSize=2,
+        threshold=0.5,
+        fixedBatchSize=False,
+        sortSample=True,
+    ):
+        self.X = copy.deepcopy(X)
+        self.Y = copy.deepcopy(Y)
+        if self.Y.getDimension() != 1:
+            raise Exception(
+                "Dimension of Y sample must be 1, provided is : %d"
+                % self.Y.getDimension()
+            )
+        self.metrics = metrics
+        self.startBatchSize = startBatchSize
+        self.fixedBatchSize = fixedBatchSize
+        self.sortSample = sortSample
+        self.threshold = threshold
+
+        if self.sortSample:
+            self._sortSample()
+        else:
+            self.sampleXsorted = self.X
+            self.sampleYsorted = self.Y
+
+    def _sortSample(self):
+        sortedRank = ot.Point(self.X.getSize())
+        # Take the first point of provided sample as start
+        sortedRank[0] = 0
+        for i in range(1, self.X.getSize()):
+            X_id = sortedRank[i - 1]
+            t0 = time.time()
+            distanceToX_id = [
+                self.computeDistance(X_id, j) for j in range(self.X.getSize())
+            ]
+            STemp = ot.Sample.BuildFromPoint(list(range(self.X.getSize())))
+            STempX = ot.Sample.BuildFromPoint(distanceToX_id)
+            STempX.stack(STemp)
+            t1 = time.time()
+            STempX = STempX.sort()
+            t2 = time.time()
+
+            # Remove point it self
+            for k in range(self.X.getSize()):
+                if STempX[k, 1] not in sortedRank:
+                    sortedRank[i] = STempX[k, 1]
+                    break
+
+            t3 = time.time()
+
+            # d_ij_min = 1e20
+            # d_index = i + 1
+            # for j in range(1, self.X.getSize()):
+            #    # Only compute distance if point not already selected
+            #    if j in sortedRank:
+            #        continue
+            #    d_ij = self.computeDistance(X_id, j)
+            #    if d_ij < d_ij_min:
+            #        d_ij_min = d_ij
+            #        d_index = j
+            # sortedRank[i] = d_index
+
+        # sampleSortedRank = ot.Sample.BuildFromPoint(sortedRank)
+        # sampleSortedRank.stack(self.X)
+        # sampleSortedRank.stack(self.Y)
+        # sampleSortedRank = sampleSortedRank.sort()
+
+        self.sampleXsorted = ot.Sample(self.X.getSize(), self.X.getDimension())
+        self.sampleYsorted = ot.Sample(self.Y.getSize(), self.Y.getDimension())
+        for i in range(self.X.getSize()):
+            p_id = sortedRank[i]
+            self.sampleXsorted[i] = self.X[p_id]
+            self.sampleYsorted[i] = self.Y[p_id]
+
+        x = 1
+
+    def computeDistance(self, i, j):
+        """
+        Compute distance between point i and j according to specified norm
+
+        Parameters
+        ----------
+        i : int
+            point i index
+        j : int
+            point j index
+
+        Returns
+        -------
+        d : float
+            distance between i and j
+        """
+
+        if self.metrics == "L2":
+            XPoint = self.X[i] - self.X[j]
+            d = XPoint.norm()
+            return d
+
+    def run(self):
+        """
+        create the samples of batches
+        """
+
+        M = self.startBatchSize
+
+        S0, S1 = self.computeS0S1(M)
+
+        SiSample = ot.Sample(0, 5)
+        SiSample.setDescription(["iteration", "M", "S0", "S1", r"$S_1/S_0$"])
+        SiSample.add([0, M, S0, S1, S1 / S0])
+        n_iter = 1
+
+        if self.fixedBatchSize == False:
+            while S1 / S0 > self.threshold and M < self.Y.getSize() // 4:
+                n_iter += 1
+                M += 1
+                S0, S1 = self.computeS0S1(M)
+                SiSample.add([n_iter, M, S0, S1, S1 / S0])
+
+        self.result = BMBCResult(self.sampleXsorted, self.sampleYsorted, SiSample)
+
+    def getResult(self):
+        """
+        accessor to BMBC result
+
+        Returns
+        -------
+        result : :class:`BMBCResult`
+        """
+        return self.result
+
+    def computeS0S1(self, M):
+        """
+        Compute S0S1 for a given batch size
+
+        M : int
+            Size of batch
+
+        Returns
+        -------
+        S0, S1: float
+            Independant and correlated variance of mean estimator
+        """
+
+        # Create a sample with batch of K elements
+        K = self.sampleYsorted.getSize() // M
+        BY = ot.Sample(K, self.Y.getDimension())
+
+        for b_id in range(K):
+            batch = self.sampleYsorted[list(range(b_id * M, (b_id + 1) * M)), :]
+            BY[b_id] = batch.computeMean()
+
+        xBY = BY - self.sampleYsorted.computeMean()
+
+        S0 = xBY.computeRawMoment(2)[0] * xBY.getSize()
+        S1 = [xBY[i, 0] * xBY[i + 1, 0] for i in range(K - 1)]
+        S1 = sum(S1)
+
+        return S0, S1
+
+
+class BMBCResult:
+    """
+    Store result of BMBC algorithm
+
+    X : :class:`~openturns.Sample`
+        Sample of position associated to each measurement. It can be a 1d sample if it is a time series or a 2d if it is a spatial series. larger dimension ar also handled.
+    Y : :class:`~openturns.Sample`
+        Sample of Measurment - Dimension must be 1
+    resultSample: :class:`~openturns.Sample`
+        result sample with following columns : ["iteration","M","S0","S1, "S1/S0"]
+    """
+
+    def __init__(self, X, Y, resultSample):
+        self.X = X
+        self.Y = Y
+        self.resultSample = resultSample
+
+    def computeMeanEstimatorVariance(self):
+        """
+        compute variance of mean estimator
+
+        Returns
+        -------
+        sigma2_mu : float
+        """
+        S0 = self.resultSample[-1, 2]
+        S1 = self.resultSample[-1, 3]
+        M = self.resultSample[-1, 1]
+        K = self.Y.getSize() // M
+        sigma2_mu = 1 / ((K - 1) * (K - 2)) * (S0 + 2 * S1)
+
+        return sigma2_mu
+
+    def getBatchIteration(self):
+        """
+        Accessor to result sample
+
+        Returns
+        -------
+        SiSample : :class:`~openturns.Sample`
+            Sample with values of S0, S1 for various M batch size
+        """
+        return self.resultSample
