@@ -491,3 +491,30 @@ class BMBCResult:
             Sample with values of S0, S1 for various M batch size
         """
         return self.resultSample
+
+    def getBlockBoostrapSample(self):
+        """
+        Get a M block bootstrap of initial provided sample
+
+        Returns
+        -------
+        Yb : :class:`~openturns.Sample`
+        """
+        M = int(self.resultSample[-1, 1])
+        K = int(self.Y.getSize() // M)
+        # build a sample of block indices
+        blockPoint = ot.Point(list(range(K)))
+        blockIndices = ot.Sample().BuildFromPoint(blockPoint)
+        bootStrapExp = ot.BootstrapExperiment(blockIndices)
+        generatedBlockIndices = bootStrapExp.generate()
+        Yb = ot.Sample(K * M, self.Y.getDimension())
+        for i in range(K):
+            b_id = int(generatedBlockIndices[i, 0])
+            Yb[list(range(i * M, (i + 1) * M))] = self.Y[
+                list(range(b_id * M, (b_id + 1) * M))
+            ]
+            # for j in range(i * M, (i + 1) * M):
+            #    indexInBlock = j - i * M
+            #    Yb[j] = self.Y[b_id + indexInBlock]
+
+        return Yb
