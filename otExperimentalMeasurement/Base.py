@@ -276,7 +276,9 @@ class BatchMeanBatchCorrelation:
     startBatchSize : int, optional
         intial batch size. Default : 2
     threshold : float, optional
-        S_1 / S_0 - default 0.5
+        S_1 / S_0 - default 0.3
+    upperThreshold : float, optional
+        S_1 / S_0 - default 0.6
     fixedBatchSize : bool, optional
         if true, optimal batch size to have the desired uncorrelation is not computed. default : False
     sortSample : bool, optional
@@ -289,7 +291,8 @@ class BatchMeanBatchCorrelation:
         Y,
         metrics="L2",
         startBatchSize=2,
-        threshold=0.5,
+        threshold=0.3,
+        upperThreshold=0.6,
         fixedBatchSize=False,
         sortSample=True,
     ):
@@ -305,6 +308,7 @@ class BatchMeanBatchCorrelation:
         self.fixedBatchSize = fixedBatchSize
         self.sortSample = sortSample
         self.threshold = threshold
+        self.upperThreshold = upperThreshold
 
         if self.sortSample:
             self._sortSample()
@@ -400,9 +404,15 @@ class BatchMeanBatchCorrelation:
         n_iter = 1
 
         if self.fixedBatchSize == False:
-            while S1 / S0 > self.threshold and M < self.Y.getSize() // 4:
+            
+            while (
+                S1 / S0 < self.threshold or S1 / S0 > self.upperThreshold
+            ) and M < self.Y.getSize() // 4:
                 n_iter += 1
-                M += 1
+                if S1 / S0 < self.threshold:
+                    M = int(0.7 * M)
+                if S1 / S0 > self.upperThreshold:
+                    M = int(1.3 * M)
                 S0, S1 = self.computeS0S1(M)
                 SiSample.add([n_iter, M, S0, S1, S1 / S0])
 
