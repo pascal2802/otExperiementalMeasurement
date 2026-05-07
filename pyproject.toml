@@ -12,7 +12,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "numpydoc>=1.10.0",
     "pytest>=9.0.3",
+    "sphinx-gallery>=0.21.0",
 ]
 
 [build-system]
