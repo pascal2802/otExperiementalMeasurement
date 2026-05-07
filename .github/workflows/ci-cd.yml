@@ -86,6 +86,6 @@ jobs:
         cd gh-pages
         git config user.name "GitHub Actions"
         git config user.email "actions@github.com"
-        git add otGpxTrack/
-        git commit -m "Update otGpxTrack documentation"
+        git add otExperimentalMeasurement/
+        git commit -m "Update otExperimentalMeasurement documentation"
         git push
