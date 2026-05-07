@@ -39,9 +39,9 @@ fig.show()
 
 # ## Batch Mean Batch Correlation
 M = 20
-threshold = 0.2
+threshold = 0.3
 bmbc = otEM.BatchMeanBatchCorrelation(
-    X, Y, threshold=threshold, fixedBatchSize=False, startBatchSize=M, sortSample=False
+        X, Y, threshold=threshold, fixedBatchSize=False, startBatchSize=M, sortSample=False
 )
 bmbc.run()
 result = bmbc.getResult()
