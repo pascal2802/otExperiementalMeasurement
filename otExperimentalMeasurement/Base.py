@@ -7,17 +7,35 @@ import time
 
 class GeneralizedLeastSquareMethod:
     """
-    Base class for generalized least square solvers
+    Solve a generalized least squares (GLS) problem.
+
+    The GLS method accounts for the covariance structure of the right-hand side
+    to provide unbiased estimates with minimal variance.
 
     Parameters
     ----------
-
     design : :class:`~openturns.Matrix`
-        design matrix
+        Design matrix of shape (n_samples, n_features).
     rhs : :class:`~openturns.Point`
-        right hand side of the generalized least square problem
+        Right-hand side vector (observations) of length n_samples.
     rhsCovarianceMatrix : :class:`~openturns.CovarianceMatrix`
-        covariance Matrix associated to the rhs
+        Covariance matrix of the observations, shape (n_samples, n_samples).
+
+    Attributes
+    ----------
+    method : str
+        Resolution method ("SVD" by default).
+    GramGLS : :class:`~openturns.Matrix`
+        Weighted Gram matrix: ``design.T @ VY_inv @ design``.
+    a : :class:`~openturns.Point`
+        Solution coefficients (available after calling :meth:`solve`).
+    v : :class:`~openturns.CovarianceMatrix`
+        Covariance matrix of the solution (available after calling :meth:`solve`).
+
+    Notes
+    -----
+    The covariance matrix ``VY`` is inverted using Cholesky decomposition for efficiency,
+    as it is positive-definite by construction.
     """
 
     def __init__(self, design, rhs, rhsCovarianceMatrix):
@@ -30,7 +48,7 @@ class GeneralizedLeastSquareMethod:
         self.VY = rhsCovarianceMatrix
         self.VY_inv = (
             self.VY.inverse()
-        )  # Compute inverse the covariance matrix, should be efficient as a covariance is a define positive matrix, n=inverse can be computed with Cholesky Alogirithm ?
+        )  # Compute inverse the covariance matrix, should be efficient as a covariance is a define positive matrix, n=inverse can be computed with Cholesky Algorithm ?
 
         self.design = design
         self.GramGLS = design.transpose() * self.VY_inv * design
@@ -38,20 +56,25 @@ class GeneralizedLeastSquareMethod:
 
     def solve(self, lambdaReg=0):
         """
-        solve the generalized least square problem
+        Solve the generalized least squares problem.
+
+        The problem is formulated as:
+        ``min ||design @ a - rhs||_VY_inv``,
+        where ``VY_inv`` is the inverse of the observation covariance matrix.
 
         Parameters
         ----------
-        lambdaReg : float - optional
-            Value to be added to the Gram matrix diagonal to reguealize the matrix if needed - default 0
+        lambdaReg : float, optional
+            Tikhonov regularization parameter added to the diagonal of ``GramGLS``
+            to improve numerical stability. Default is 0 (no regularization).
 
         Returns
         -------
         a : :class:`~openturns.Point`
-            The solution
-
+            Estimated coefficients (shape: n_features).
         v : :class:`~openturns.CovarianceMatrix`
-            Covariance matrix of the solution
+            Covariance matrix of the coefficients (shape: n_features, n_features).
+            If the matrix is not symmetric, a warning is issued.
         """
 
         if self.method == "SVD":
@@ -65,19 +88,19 @@ class GeneralizedLeastSquareMethod:
 
         Parameters
         ----------
-        lambdaReg : float - optional
-            Value to be added to the Gram matrix diagonal to reguealize the matrix if needed - default 0
+        lambdaReg : float, optional
+            Regularization parameter added to the diagonal of the Gram matrix
+            to improve numerical stability. Default is 0.
 
         Returns
         -------
         a : :class:`~openturns.Point`
-            The solution
-
+            The solution coefficients.
         v : :class:`~openturns.CovarianceMatrix`
-            Covariance matrix of the solution
+            Covariance matrix of the solution.
         """
 
-        # Compute SVD :
+        # Compute SVD:
         GramGLS = self.GramGLS + ot.IdentityMatrix(self.size) * lambdaReg
         SigmaDiag, U, Vt = GramGLS.computeSVD(True)
         Sigma_inv = ot.Matrix(self.size, self.size)
@@ -107,29 +130,45 @@ class GeneralizedLeastSquareMethod:
 
 class PCEWithGLSorGGMR:
     """
-    Create a polynomial chaos by least squares with GLS or GLS-GGMR methods
+    Build a Polynomial Chaos Expansion (PCE) metamodel using Generalized Least Squares (GLS)
+    or GLS with Generalized Golgi-Morse Regularization (GGMR).
 
     Parameters
     ----------
     inputSample : :class:`~openturns.Sample`
-        The input sample.
+        Input sample of shape (n_samples, n_input_vars).
     outputSample : :class:`~openturns.Sample`
-        The output sample with dimension 1
-    distribution : :class:`openturns.Distribution`
-        The distribution of the input.
-    VYCollection : sequence of :class:`openturns.CovarianceMatrix`
-        Collection of VarianceCovariance Matrix associated to each column of outputSample
+        Output sample of shape (n_samples, 1).
+    distribution : :class:`~openturns.Distribution`
+        Probability distribution of the input variables.
+    VYCollection : sequence of :class:`~openturns.CovarianceMatrix`
+        Covariance matrices for each output column (length = outputSample.getDimension()).
     multivariateBasis : :class:`~openturns.OrthogonalBasis`
-        The orthogonal basis of functions.
+        Orthogonal basis for the PCE (e.g., Legendre, Hermite).
     totalDegree : int
-        Set the total degree of the PCE
+        Maximum total degree of the polynomial basis.
     maximumBasisSize : int
-        The maximum number of coefficients in the basis. if maximumBasisSize < basisSize(totalDegree), the n most significant coefficient are selected
-    selectedIndices : :class:`~openturns.IndicesCollection` - optional
-        indices of the basis functions used for the PCE - default None
-    leastSquaresMethod : str
-        The resolution method : "GLS" or "GGMR"
+        Maximum number of basis functions to retain. If the total basis size
+        exceeds this, the least significant coefficients are discarded.
+    selectedIndices : :class:`~openturns.IndicesCollection`, optional
+        Pre-selected indices of basis functions to use. If None, all indices
+        up to ``totalDegree`` are considered. Default is None.
+    leastSquaresMethod : {"GLS", "GGMR"}, optional
+        Method to solve the least squares problem. Default is "GLS".
 
+    Attributes
+    ----------
+    result : :class:`~openturns.FunctionalChaosResult`
+        The PCE metamodel (available after calling :meth:`run`).
+    covMCollection : list of :class:`~openturns.CovarianceMatrix`
+        Covariance matrices for the PCE coefficients.
+
+    Notes
+    -----
+    The method automatically selects the most significant basis functions
+    if ``maximumBasisSize`` is smaller than the total basis size.
+    For multi-output problems (outputSample dimension > 1), only the first column
+    is currently supported (see FIXME in code).
     """
 
     def __init__(
@@ -159,7 +198,18 @@ class PCEWithGLSorGGMR:
 
     def run(self):
         """
-        Create the the functional chaos metamodel
+        Build the PCE metamodel and compute its coefficients.
+
+        Steps:
+        1. Construct the design matrix from the input sample and basis functions.
+        2. Solve the GLS problem to estimate coefficients.
+        3. If necessary, truncate the basis to ``maximumBasisSize`` and re-fit.
+        4. Store the result in :attr:`result` and :attr:`covMCollection`.
+
+        Raises
+        ------
+        NotImplementedError
+            If ``outputSample`` has dimension > 1 (not yet supported).
         """
 
         enumerateFunction = self.multivariateBasis.getEnumerateFunction()
@@ -253,9 +303,9 @@ class PCEWithGLSorGGMR:
         -------
         result : :class:`~openturns.FunctionalChaosResult`
             The metamodel.
-
         covMCollection : sequence of :class:`~openturns.CovarianceMatrix`
-            Sequence of covariance Matrix associated to each coefficient set (one per column of output Sample)
+            Sequence of covariance matrices associated to each coefficient set
+            (one per column of output sample).
         """
 
         return self.result, self.covMCollection
@@ -263,26 +313,48 @@ class PCEWithGLSorGGMR:
 
 class BatchMeanBatchCorrelation:
     """
-    Base class for batch mean batch correlation
+    Estimate the variance of the mean for correlated data using the Batch Mean method.
+
+    This method partitions the sample into batches and adjusts the batch size
+    to minimize correlation between batches, enabling consistent variance estimation.
 
     Parameters
     ----------
     X : :class:`~openturns.Sample`
-        Sample of position associated to each measurement. It can be a 1d sample if it is a time series or a 2d if it is a spatial series. larger dimension ar also handled.
+        Sample of positions (e.g., time or spatial coordinates) of shape (n_samples, n_dims).
     Y : :class:`~openturns.Sample`
-        Sample of Measurment - Dimension must be 1
-    Metrics: str, optional
-        metrics used to compute distance between points. Can be "L1" or "L2". default : "L2"
+        Measurement sample of shape (n_samples, 1). Must be 1-dimensional.
+    metrics : {"L1", "L2"}, optional
+        Distance metric for sorting the sample. Default is "L2".
     startBatchSize : int, optional
-        intial batch size. Default : 2
+        Initial batch size. Default is 2.
     threshold : float, optional
-        S_1 / S_0 - default 0.3
+        Lower threshold for the ratio ``S1/S0`` (correlated vs. uncorrelated variance).
+        If ``S1/S0 < threshold``, the batch size is reduced. Default is 0.3.
     upperThreshold : float, optional
-        S_1 / S_0 - default 0.6
+        Upper threshold for ``S1/S0``. If ``S1/S0 > upperThreshold``, the batch size is increased.
+        Default is 0.6.
     fixedBatchSize : bool, optional
-        if true, optimal batch size to have the desired uncorrelation is not computed. default : False
+        If True, the batch size is fixed to ``startBatchSize`` and not optimized.
+        Default is False.
     sortSample : bool, optional
-        if true, provided X and Y sample are sorted according to provided norm. First point is arbritary, then next is the closest one. Defaul : true
+        If True, the sample is sorted by distance before batching. Default is True.
+
+    Attributes
+    ----------
+    result : :class:`BMBCResult`
+        Result object containing batch statistics (available after calling :meth:`run`).
+    sampleXsorted : :class:`~openturns.Sample`
+        Sorted positions (if ``sortSample=True``).
+    sampleYsorted : :class:`~openturns.Sample`
+        Sorted measurements (if ``sortSample=True``).
+
+    Notes
+    -----
+    The method is based on the batch means approach for correlated data.
+    The optimal batch size ``M`` is determined iteratively to satisfy:
+    ``threshold <= S1/S0 <= upperThreshold``,
+    where ``S0`` is the uncorrelated variance and ``S1`` is the correlated variance.
     """
 
     def __init__(
@@ -369,19 +441,19 @@ class BatchMeanBatchCorrelation:
 
     def computeDistance(self, i, j):
         """
-        Compute distance between point i and j according to specified norm
+        Compute distance between point i and j according to specified norm.
 
         Parameters
         ----------
         i : int
-            point i index
+            Index of point i.
         j : int
-            point j index
+            Index of point j.
 
         Returns
         -------
         d : float
-            distance between i and j
+            Distance between points i and j.
         """
 
         if self.metrics == "L2":
@@ -391,7 +463,19 @@ class BatchMeanBatchCorrelation:
 
     def run(self):
         """
-        create the samples of batches
+        Compute the optimal batch size and estimate the mean variance.
+
+        Steps:
+
+        1. If ``sortSample=True``, sort the sample by distance.
+        2. Iteratively adjust the batch size ``M`` until ``S1/S0`` falls within
+           [``threshold``, ``upperThreshold``].
+        3. Store results in :attr:`result` (including ``S0``, ``S1``, and batch sizes).
+
+        Returns
+        -------
+        None
+            Results are stored in :attr:`result`.
         """
 
         M = self.startBatchSize
@@ -420,25 +504,30 @@ class BatchMeanBatchCorrelation:
 
     def getResult(self):
         """
-        accessor to BMBC result
+        Accessor to BMBC result.
 
         Returns
         -------
         result : :class:`BMBCResult`
+            Result object containing batch statistics.
         """
         return self.result
 
     def computeS0S1(self, M):
         """
-        Compute S0S1 for a given batch size
+        Compute S0 and S1 for a given batch size.
 
+        Parameters
+        ----------
         M : int
-            Size of batch
+            Size of batch.
 
         Returns
         -------
-        S0, S1: float
-            Independant and correlated variance of mean estimator
+        S0 : float
+            Independent (uncorrelated) variance of mean estimator.
+        S1 : float
+            Correlated variance of mean estimator.
         """
 
         # Create a sample with batch of K elements
@@ -460,14 +549,26 @@ class BatchMeanBatchCorrelation:
 
 class BMBCResult:
     """
-    Store result of BMBC algorithm
+    Store result of the Batch Mean Batch Correlation (BMBC) algorithm.
 
+    Parameters
+    ----------
     X : :class:`~openturns.Sample`
-        Sample of position associated to each measurement. It can be a 1d sample if it is a time series or a 2d if it is a spatial series. larger dimension ar also handled.
+        Original positions of shape (n_samples, n_dims).
     Y : :class:`~openturns.Sample`
-        Sample of Measurment - Dimension must be 1
-    resultSample: :class:`~openturns.Sample`
-        result sample with following columns : ["iteration","M","S0","S1, "S1/S0"]
+        Original measurements of shape (n_samples, 1).
+    resultSample : :class:`~openturns.Sample`
+        Sample containing iteration history with columns:
+        ["iteration", "M", "S0", "S1", "S1/S0"].
+
+    Attributes
+    ----------
+    X : :class:`~openturns.Sample`
+        Original positions.
+    Y : :class:`~openturns.Sample`
+        Original measurements.
+    resultSample : :class:`~openturns.Sample`
+        Iteration history (last row = final result).
     """
 
     def __init__(self, X, Y, resultSample):
@@ -477,11 +578,12 @@ class BMBCResult:
 
     def computeMeanEstimatorVariance(self):
         """
-        compute variance of mean estimator
+        Compute variance of mean estimator.
 
         Returns
         -------
         sigma2_mu : float
+            Estimated variance of the mean.
         """
         S0 = self.resultSample[-1, 2]
         S1 = self.resultSample[-1, 3]
@@ -493,22 +595,23 @@ class BMBCResult:
 
     def getBatchIteration(self):
         """
-        Accessor to result sample
+        Accessor to result sample.
 
         Returns
         -------
-        SiSample : :class:`~openturns.Sample`
-            Sample with values of S0, S1 for various M batch size
+        resultSample : :class:`~openturns.Sample`
+            Sample with values of S0, S1 for various batch sizes.
         """
         return self.resultSample
 
     def getBlockBoostrapSample(self):
         """
-        Get a M block bootstrap of initial provided sample
+        Get a block bootstrap sample from the initial provided sample.
 
         Returns
         -------
         Yb : :class:`~openturns.Sample`
+            Bootstrap sample constructed by resampling blocks of size M.
         """
         M = int(self.resultSample[-1, 1])
         K = int(self.Y.getSize() // M)
