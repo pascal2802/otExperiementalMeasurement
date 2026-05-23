@@ -276,8 +276,6 @@ class PCEWithGLSorGGMR:
         # update functions collection for PCE result
         phis = [self.multivariateBasis.build(i) for i in phisIndexes]
 
-        residualsPoint = [1.0]
-        relativeErrorsPoint = [1.0]
         self.result = ot.FunctionalChaosResult(
             self.inputSample,
             self.outputSample,
@@ -288,8 +286,6 @@ class PCEWithGLSorGGMR:
             phisIndexes,
             ot.Sample.BuildFromPoint(a),
             phis,
-            residualsPoint,
-            relativeErrorsPoint,
         )
 
         # FIXME : class inherited from FunctionalChaosResult to be created
